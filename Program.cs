@@ -57,7 +57,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddControllers();
 
 var allowedOrigins = builder.Configuration["AllowedOrigins"]?.Split(',')
-    ?? new[] { "http://localhost:5173", "http://localhost:5174", "http://localhost:3000" };
+    ?? new[] { "http://localhost:5173","https://floralinkproject.netlify.app", "http://localhost:5174", "http://localhost:3000" };
 builder.Services.AddCors(options =>
     options.AddPolicy("FloraLinkPolicy", p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
