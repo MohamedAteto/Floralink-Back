@@ -56,10 +56,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 builder.Services.AddControllers();
 
-var allowedOrigins = builder.Configuration["AllowedOrigins"]?.Split(',')
-    ?? new[] { "http://localhost:5173","https://floralinkproject.netlify.app", "http://localhost:5174", "http://localhost:3000" };
+var allowedOrigins = (builder.Configuration["AllowedOrigins"]?.Split(',')
+        ?? new[] { "http://localhost:5173", "https://floralinkproject.netlify.app", "http://localhost:5174", "http://localhost:3000" })
+    .Select(origin => origin.Trim())
+    .Where(origin => !string.IsNullOrWhiteSpace(origin))
+    .ToArray();
+
 builder.Services.AddCors(options =>
-    options.AddPolicy("FloraLinkPolicy", p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+    options.AddPolicy("FloraLinkPolicy", p =>
+        p.WithOrigins(allowedOrigins)
+         .AllowAnyHeader()
+         .AllowAnyMethod()));
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
