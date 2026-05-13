@@ -36,16 +36,14 @@ public class AIPlantService
 
         var requestBody = new
         {
-            model = "openai/gpt-3.5-turbo",
+            model = "gpt-4o-mini",
             messages = new[] { new { role = "user", content = prompt } },
             max_tokens = 200,
             temperature = 0.2
         };
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "https://openrouter.ai/api/v1/chat/completions");
+        var request = new HttpRequestMessage(HttpMethod.Post, "https://models.inference.ai.azure.com/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        request.Headers.Add("HTTP-Referer", "https://floralink.app");
-        request.Headers.Add("X-Title", "FloraLink");
         request.Content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
 
         try
