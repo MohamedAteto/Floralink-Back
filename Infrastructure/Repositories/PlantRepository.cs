@@ -13,13 +13,13 @@ public class PlantRepository : IPlantRepository
 
     public async Task<IEnumerable<Plant>> GetAllByUserIdAsync(int userId)
     {
-        var query = _db.Plants.Include(p => p.PlantType).AsQueryable();
+        var query = _db.Plants.Include(p => p.PlantType).Include(p => p.User).AsQueryable();
         if (userId != 0) query = query.Where(p => p.UserId == userId);
         return await query.ToListAsync();
     }
 
     public Task<Plant?> GetByIdAsync(int id) =>
-        _db.Plants.Include(p => p.PlantType).FirstOrDefaultAsync(p => p.Id == id);
+        _db.Plants.Include(p => p.PlantType).Include(p => p.User).FirstOrDefaultAsync(p => p.Id == id);
 
     public async Task<Plant> AddAsync(Plant plant)
     {
