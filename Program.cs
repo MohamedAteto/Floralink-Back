@@ -38,6 +38,8 @@ builder.Services.AddScoped<IAlertService, AlertService>();
 builder.Services.AddScoped<IDiaryService, DiaryService>();
 builder.Services.AddScoped<IPlantTypeService, PlantTypeService>();
 builder.Services.AddScoped<AIPlantService>();
+builder.Services.AddSingleton<FloraLink.Application.Services.EmailService>();
+builder.Services.AddScoped<FloraLink.Application.Interfaces.IEmailService>(sp => sp.GetRequiredService<FloraLink.Application.Services.EmailService>());
 
 var jwtKey = builder.Configuration["Jwt:Key"]!;
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
