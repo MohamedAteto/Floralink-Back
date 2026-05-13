@@ -1,6 +1,7 @@
 using FloraLink.Application.DTOs.Sensor;
 using FloraLink.Application.DTOs.Watering;
 using FloraLink.Application.Interfaces;
+using FloraLink.Application.Services;
 using FloraLink.Domain.Entities;
 using FloraLink.Domain.Interfaces;
 
@@ -13,19 +14,22 @@ public class SensorService : ISensorService
     private readonly IAlertRepository _alerts;
     private readonly IWateringService _wateringService;
     private readonly IWateringRepository _wateringRepository;
+    private readonly EmailService _emailService;
 
     public SensorService(
         ISensorReadingRepository readings,
         IPlantRepository plants,
         IAlertRepository alerts,
         IWateringService wateringService,
-        IWateringRepository wateringRepository)
+        IWateringRepository wateringRepository,
+        EmailService emailService)
     {
         _readings = readings;
         _plants = plants;
         _alerts = alerts;
         _wateringService = wateringService;
         _wateringRepository = wateringRepository;
+        _emailService = emailService;
     }
 
     public async Task<SensorReadingDto> ProcessSensorDataAsync(SensorDataDto dto)
@@ -69,44 +73,58 @@ public class SensorService : ISensorService
     private async Task CheckAndCreateAlertsAsync(Plant plant, SensorDataDto dto, double healthScore)
     {
         var plantType = plant.PlantType;
+        var ownerEmail = plant.User?.Email ?? string.Empty;
+        var ownerName = plant.User?.Username ?? "there";
 
         if (dto.SoilMoisture < plantType.CriticalMoistureThreshold)
         {
+            var msg = $"{plant.Name} soil moisture critically low ({dto.SoilMoisture:F1}%). Water immediately!";
             await _alerts.AddAsync(new Alert
             {
                 PlantId = plant.Id,
-                Message = $"{plant.Name} soil moisture critically low ({dto.SoilMoisture:F1}%). Water immediately!",
+                Message = msg,
                 Severity = "Critical"
             });
+            if (_emailService.ShouldSendEmail(plant.Id, "CriticalMoisture"))
+                await _emailService.SendPlantAlertAsync(ownerEmail, ownerName, plant.Name, msg, "Critical");
         }
         else if (dto.SoilMoisture < plantType.MinMoisture)
         {
+            var msg = $"{plant.Name} needs watering soon. Moisture: {dto.SoilMoisture:F1}%";
             await _alerts.AddAsync(new Alert
             {
                 PlantId = plant.Id,
-                Message = $"{plant.Name} needs watering soon. Moisture: {dto.SoilMoisture:F1}%",
+                Message = msg,
                 Severity = "Warning"
             });
+            if (_emailService.ShouldSendEmail(plant.Id, "WarningMoisture"))
+                await _emailService.SendPlantAlertAsync(ownerEmail, ownerName, plant.Name, msg, "Warning");
         }
 
         if (dto.Temperature > plantType.MaxTemperature + 5)
         {
+            var msg = $"{plant.Name} temperature too high ({dto.Temperature:F1}°C). Move to cooler area.";
             await _alerts.AddAsync(new Alert
             {
                 PlantId = plant.Id,
-                Message = $"{plant.Name} temperature too high ({dto.Temperature:F1}°C). Move to cooler area.",
+                Message = msg,
                 Severity = "Warning"
             });
+            if (_emailService.ShouldSendEmail(plant.Id, "WarningTemp"))
+                await _emailService.SendPlantAlertAsync(ownerEmail, ownerName, plant.Name, msg, "Warning");
         }
 
         if (healthScore < 40)
         {
+            var msg = $"{plant.Name} health score critical ({healthScore:F0}/100). Immediate attention needed.";
             await _alerts.AddAsync(new Alert
             {
                 PlantId = plant.Id,
-                Message = $"{plant.Name} health score critical ({healthScore:F0}/100). Immediate attention needed.",
+                Message = msg,
                 Severity = "Critical"
             });
+            if (_emailService.ShouldSendEmail(plant.Id, "CriticalHealth"))
+                await _emailService.SendPlantAlertAsync(ownerEmail, ownerName, plant.Name, msg, "Critical");
         }
     }
 
