@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -12,6 +13,9 @@ public class AIPlantService
     private readonly IConfiguration _config;
     private readonly ILogger<AIPlantService> _logger;
     private readonly HttpClient _http;
+
+    private const int MaxAttempts = 3;
+    private static readonly TimeSpan[] RetryDelays = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)];
 
     public AIPlantService(IConfiguration config, ILogger<AIPlantService> logger, IHttpClientFactory httpFactory)
     {
@@ -28,7 +32,7 @@ public class AIPlantService
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            _logger.LogWarning("OpenRouter API key not configured (OPENAI_API_KEY env var or OpenAI:ApiKey in appsettings) — skipping AI fallback");
+            _logger.LogWarning("OpenRouter API key not configured (set OPENAI_API_KEY env var or OpenAI:ApiKey in appsettings) — skipping AI fallback");
             return null;
         }
 
@@ -37,30 +41,58 @@ public class AIPlantService
                      $"temperatureMax (Celsius), wateringFrequency\n" +
                      $"Plant name: {plantName}";
 
-        var requestBody = new
+        var requestBodyJson = JsonSerializer.Serialize(new
         {
             model = "deepseek/deepseek-chat",
             messages = new[] { new { role = "user", content = prompt } },
             max_tokens = 200,
             temperature = 0.2
-        };
+        });
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "https://openrouter.ai/api/v1/chat/completions");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        request.Headers.Add("HTTP-Referer", "https://floralink.netlify.app");
-        request.Headers.Add("X-Title", "FloraLink");
-        request.Content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+        {
+            var result = await TryFetchAsync(plantName, apiKey, requestBodyJson, attempt);
+            if (result.Plant is not null)
+                return result.Plant;
 
+            if (!result.ShouldRetry || attempt == MaxAttempts)
+                break;
+
+            var delay = RetryDelays[attempt - 1];
+            _logger.LogWarning("Retrying AI lookup for '{PlantName}' in {Delay}s (attempt {Attempt}/{Max})",
+                plantName, delay.TotalSeconds, attempt, MaxAttempts);
+            await Task.Delay(delay);
+        }
+
+        return null;
+    }
+
+    private async Task<(PlantType? Plant, bool ShouldRetry)> TryFetchAsync(
+        string plantName, string apiKey, string requestBodyJson, int attempt)
+    {
         try
         {
+            var request = new HttpRequestMessage(HttpMethod.Post, "https://openrouter.ai/api/v1/chat/completions");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            request.Headers.Add("HTTP-Referer", "https://floralink.netlify.app");
+            request.Headers.Add("X-Title", "FloraLink");
+            request.Content = new StringContent(requestBodyJson, Encoding.UTF8, "application/json");
+
             var response = await _http.SendAsync(request);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("OpenRouter returned {Status} for plant '{PlantName}'. Response: {Body}",
-                    (int)response.StatusCode, plantName, responseBody);
-                return null;
+                var statusCode = (int)response.StatusCode;
+                var shouldRetry = response.StatusCode == HttpStatusCode.TooManyRequests
+                    || response.StatusCode == HttpStatusCode.ServiceUnavailable
+                    || statusCode >= 500;
+
+                _logger.LogWarning(
+                    "OpenRouter returned {Status} for '{PlantName}' (attempt {Attempt}/{Max}). Retry={ShouldRetry}. Response: {Body}",
+                    statusCode, plantName, attempt, MaxAttempts, shouldRetry, responseBody);
+
+                return (null, shouldRetry);
             }
 
             string content;
@@ -75,19 +107,19 @@ public class AIPlantService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to parse OpenRouter response for '{PlantName}'. Raw response: {Body}",
-                    plantName, responseBody);
-                return null;
+                _logger.LogError(ex, "Failed to parse OpenRouter response for '{PlantName}' (attempt {Attempt}). Raw: {Body}",
+                    plantName, attempt, responseBody);
+                return (null, false);
             }
 
-            // Extract JSON block from response text
+            // Extract the JSON object from the AI text
             var start = content.IndexOf('{');
             var end = content.LastIndexOf('}');
             if (start < 0 || end < 0)
             {
-                _logger.LogWarning("No JSON object found in AI response for '{PlantName}'. Content: {Content}",
-                    plantName, content);
-                return null;
+                _logger.LogWarning("No JSON object in AI response for '{PlantName}' (attempt {Attempt}). Content: {Content}",
+                    plantName, attempt, content);
+                return (null, false);
             }
 
             var jsonPart = content[start..(end + 1)];
@@ -106,9 +138,9 @@ public class AIPlantService
             moistureMax = Math.Clamp(moistureMax, moistureMin, 100);
             if (tempMin >= tempMax) tempMax = tempMin + 10;
 
-            _logger.LogInformation("AI lookup succeeded for '{PlantName}' via OpenRouter", plantName);
+            _logger.LogInformation("AI lookup succeeded for '{PlantName}' via OpenRouter (attempt {Attempt})", plantName, attempt);
 
-            return new PlantType
+            return (new PlantType
             {
                 Name = plantName,
                 Category = "Custom",
@@ -121,12 +153,24 @@ public class AIPlantService
                 WateringFrequency = watering,
                 Description = $"AI-generated requirements for {plantName}",
                 IsAIGenerated = true
-            };
+            }, false);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Network error calling OpenRouter for '{PlantName}' (attempt {Attempt}/{Max}) — will retry",
+                plantName, attempt, MaxAttempts);
+            return (null, true);
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogWarning(ex, "Request to OpenRouter timed out for '{PlantName}' (attempt {Attempt}/{Max}) — will retry",
+                plantName, attempt, MaxAttempts);
+            return (null, true);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "AI plant fetch failed for '{PlantName}'", plantName);
-            return null;
+            _logger.LogError(ex, "Unexpected error during AI plant fetch for '{PlantName}' (attempt {Attempt})", plantName, attempt);
+            return (null, false);
         }
     }
 }
