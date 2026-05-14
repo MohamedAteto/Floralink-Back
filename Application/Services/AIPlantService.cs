@@ -22,10 +22,13 @@ public class AIPlantService
 
     public async Task<PlantType?> FetchPlantRequirementsAsync(string plantName)
     {
-        var apiKey = _config["OpenAI:ApiKey"];
+        // Prefer OPENAI_API_KEY env var; fall back to appsettings OpenAI:ApiKey
+        var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+            ?? _config["OpenAI:ApiKey"];
+
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            _logger.LogWarning("OpenAI API key not configured — skipping AI fallback");
+            _logger.LogWarning("OpenRouter API key not configured (OPENAI_API_KEY env var or OpenAI:ApiKey in appsettings) — skipping AI fallback");
             return null;
         }
 
@@ -36,37 +39,57 @@ public class AIPlantService
 
         var requestBody = new
         {
-            model = "gpt-4o-mini",
+            model = "deepseek/deepseek-chat",
             messages = new[] { new { role = "user", content = prompt } },
             max_tokens = 200,
             temperature = 0.2
         };
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "https://models.inference.ai.azure.com/chat/completions");
+        var request = new HttpRequestMessage(HttpMethod.Post, "https://openrouter.ai/api/v1/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        request.Headers.Add("HTTP-Referer", "https://floralink.netlify.app");
+        request.Headers.Add("X-Title", "FloraLink");
         request.Content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
 
         try
         {
             var response = await _http.SendAsync(request);
+            var responseBody = await response.Content.ReadAsStringAsync();
+
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("OpenAI returned {Status}", response.StatusCode);
+                _logger.LogWarning("OpenRouter returned {Status} for plant '{PlantName}'. Response: {Body}",
+                    (int)response.StatusCode, plantName, responseBody);
                 return null;
             }
 
-            var json = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(json);
-            var content = doc.RootElement
-                .GetProperty("choices")[0]
-                .GetProperty("message")
-                .GetProperty("content")
-                .GetString() ?? "";
+            string content;
+            try
+            {
+                using var doc = JsonDocument.Parse(responseBody);
+                content = doc.RootElement
+                    .GetProperty("choices")[0]
+                    .GetProperty("message")
+                    .GetProperty("content")
+                    .GetString() ?? "";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to parse OpenRouter response for '{PlantName}'. Raw response: {Body}",
+                    plantName, responseBody);
+                return null;
+            }
 
-            // Extract JSON from response
+            // Extract JSON block from response text
             var start = content.IndexOf('{');
             var end = content.LastIndexOf('}');
-            if (start < 0 || end < 0) return null;
+            if (start < 0 || end < 0)
+            {
+                _logger.LogWarning("No JSON object found in AI response for '{PlantName}'. Content: {Content}",
+                    plantName, content);
+                return null;
+            }
+
             var jsonPart = content[start..(end + 1)];
 
             using var plantDoc = JsonDocument.Parse(jsonPart);
@@ -78,10 +101,12 @@ public class AIPlantService
             double tempMax = root.TryGetProperty("temperatureMax", out var tx) ? tx.GetDouble() : 30;
             string watering = root.TryGetProperty("wateringFrequency", out var wf) ? wf.GetString() ?? "3-5 days" : "3-5 days";
 
-            // Validate
+            // Validate ranges
             moistureMin = Math.Clamp(moistureMin, 0, 100);
             moistureMax = Math.Clamp(moistureMax, moistureMin, 100);
             if (tempMin >= tempMax) tempMax = tempMin + 10;
+
+            _logger.LogInformation("AI lookup succeeded for '{PlantName}' via OpenRouter", plantName);
 
             return new PlantType
             {
@@ -100,7 +125,7 @@ public class AIPlantService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "AI plant fetch failed for {PlantName}", plantName);
+            _logger.LogError(ex, "AI plant fetch failed for '{PlantName}'", plantName);
             return null;
         }
     }
