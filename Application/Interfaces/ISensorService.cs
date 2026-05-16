@@ -6,4 +6,5 @@ public interface ISensorService
 {
     Task<SensorReadingDto> ProcessSensorDataAsync(SensorDataDto dto);
     Task<IEnumerable<SensorReadingDto>> GetReadingsAsync(int plantId, int limit = 100);
+    Task<SensorReadingDto?> GetLatestReadingAsync(int plantId);
 }
