@@ -30,6 +30,23 @@ public class SensorController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Returns the single most recent sensor reading for a plant — ideal for live dashboard polling.
+    /// Returns: soilMoisture, temperature, healthScore, plantStatus, recordedAt
+    /// </summary>
+    [HttpGet("{plantId}/latest")]
+    [Authorize]
+    public async Task<IActionResult> GetLatest(int plantId)
+    {
+        var reading = await _sensor.GetLatestReadingAsync(plantId);
+        if (reading is null)
+            return NotFound(new { message = $"No sensor readings found for plant {plantId}." });
+        return Ok(reading);
+    }
+
+    /// <summary>
+    /// Returns historical sensor readings for a plant (default: last 100).
+    /// </summary>
     [HttpGet("{plantId}/readings")]
     [Authorize]
     public async Task<IActionResult> GetReadings(int plantId, [FromQuery] int limit = 100) =>
