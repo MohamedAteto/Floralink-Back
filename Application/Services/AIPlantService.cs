@@ -27,7 +27,7 @@ public class AIPlantService
     public async Task<PlantType?> FetchPlantRequirementsAsync(string plantName)
     {
         // Prefer OPENAI_API_KEY env var; fall back to appsettings OpenAI:ApiKey
-        var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+        var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY1")
             ?? _config["OpenAI:ApiKey"];
 
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -43,7 +43,7 @@ public class AIPlantService
 
         var requestBodyJson = JsonSerializer.Serialize(new
         {
-            model = "deepseek/deepseek-chat",
+            model = "openrouter/free",
             messages = new[] { new { role = "user", content = prompt } },
             max_tokens = 200,
             temperature = 0.2
