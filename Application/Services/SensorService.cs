@@ -64,6 +64,12 @@ public class SensorService : ISensorService
         return MapToDto(saved);
     }
 
+    public async Task<SensorReadingDto?> GetLatestReadingAsync(int plantId)
+    {
+        var reading = await _readings.GetLatestByPlantIdAsync(plantId);
+        return reading is null ? null : MapToDto(reading);
+    }
+
     public async Task<IEnumerable<SensorReadingDto>> GetReadingsAsync(int plantId, int limit = 100)
     {
         var readings = await _readings.GetByPlantIdAsync(plantId, limit);
